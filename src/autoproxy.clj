@@ -28,8 +28,21 @@
 		       {:name (.getName m)
 			:args (vec (take (count (.getParameterTypes m)) (args-list)))}))
 	all-sigs (into #{} (apply concat (map signatures (map resolve interfaces))))
+	names (set (for [sig all-sigs] (:name sig)))
 	undefined (difference all-sigs defined)
 	wrap-sym (gensym "wrapped")
-	auto-gen (map (fn [x] `(~(symbol (:name x)) ~(:args x)
+	auto-gen (for [name names]
+		   `(~(symbol name)
+		     ~@(for [m args
+			     :let [n (str (first m))]
+			     :when (= name n)]
+			 (rest m))
+		     ~@(for [m undefined
+			     :when (= name (:name m))]
+			 `(~(:args m)
+			   (~(symbol (str "." (:name m)))
+			    ~wrap-sym
+			    ~@(:args m))))))
+	auto-gen2 (map (fn [x] `(~(symbol (:name x)) ~(:args x)
 				(~(symbol (str "." (:name x))) ~wrap-sym ~@(:args x)))) undefined)]
-     `(let [~wrap-sym ~obj] (proxy ~interfaces ~variables ~@args ~@auto-gen))))
+     `(let [~wrap-sym ~obj] (proxy ~interfaces ~variables ~@auto-gen))))
