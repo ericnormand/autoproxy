@@ -2,34 +2,61 @@
   (:use clojure.set)
   (:import [java.lang.reflect Modifier]))
 
-;; This macro was written by Tim Lopez
-;; See the blog post
-;; http://www.brool.com/index.php/snippet-automatic-proxy-creation-in-clojure
-(defmacro auto-proxy [interfaces variables & args]
-  (let [defined (set (map #(str (first %)) args))
-        names (fn [i] (map #(.getName %) (.getMethods i)))
-        all-names (into #{} (apply concat (map names (map resolve interfaces))))
-        undefined (difference all-names defined)
-        auto-gen (map (fn [x] `(~(symbol x) [& ~'args])) undefined)]
-    `(proxy ~interfaces ~variables ~@args ~@auto-gen)))
+(defn- parse-proxy-fns
+  [fns]
+  (set (for [f fns]
+	 {:name (str (first f))
+	  :args (count (second f))})))
 
-(defn args-list [] (for [x (iterate inc 0)] (symbol (str "a" x))))
+(defn- parse-methods
+  [methods]
+  (set (for [m methods
+	     :when (not (Modifier/isFinal (.getModifiers m)))]
+	 {:name (.getName m)
+	  :args (count (.getParameterTypes m))})))
+
+(defn- resolve-interfaces
+  [ins]
+  (set (map resolve ins)))
+
+(defn- get-all-methods
+  [ins]
+  (apply union (for [i (resolve-interfaces ins)] (parse-methods (.getMethods i)))))
+
+(defn- args-list [] (for [x (iterate inc 0)] (symbol (str "a" x))))
+
+;; This macro was originally written by Tim Lopez
+;;
+;; See the blog post
+;;
+;; http://www.brool.com/index.php/snippet-automatic-proxy-creation-in-clojure
+;;
+;; Modified by Eric Normand to deal with methods with the same name
+;; but different numbers of arguments.
+(defmacro auto-proxy [interfaces variables & args]
+  (let [defined (parse-proxy-fns args)
+	all-methods (get-all-methods interfaces)
+	names (set (for [m all-methods] (:name m)))
+	undefined (difference all-methods defined)
+	auto-gen (for [name names]
+		   `(~(symbol name)
+		     ~@(for [m args
+			     :let [n (str (first m))]
+			     :when (= name n)]
+			 (rest m))
+		     ~@(for [m undefined
+			     :when (= name (:name m))]
+			 `(~(vec (take (:args m) (args-list)))))))]
+    `(proxy ~interfaces ~variables ~@auto-gen)))
+
+
 
 ;; This macro was inspired by the above macro
 (defmacro auto-wrapper [obj interfaces variables & args]
-  (let [defined (set (map #(hash-map
-			    :name (str (first %))
-			    :args (vec (take (count (second %))
-					     (args-list))))
-			  args))
-	signatures (fn [i]
-		     (for [m (.getMethods i)
-			   :when (not (Modifier/isFinal (.getModifiers m)))]
-		       {:name (.getName m)
-			:args (vec (take (count (.getParameterTypes m)) (args-list)))}))
-	all-sigs (into #{} (apply concat (map signatures (map resolve interfaces))))
-	names (set (for [sig all-sigs] (:name sig)))
-	undefined (difference all-sigs defined)
+  (let [defined (parse-proxy-fns args)
+	all-methods (get-all-methods interfaces)
+	names (set (for [m all-methods] (:name m)))
+	undefined (difference all-methods defined)
 	wrap-sym (gensym "wrapped")
 	auto-gen (for [name names]
 		   `(~(symbol name)
@@ -39,10 +66,8 @@
 			 (rest m))
 		     ~@(for [m undefined
 			     :when (= name (:name m))]
-			 `(~(:args m)
+			 `(~(vec (take (:args m) (args-list)))
 			   (~(symbol (str "." (:name m)))
 			    ~wrap-sym
-			    ~@(:args m))))))
-	auto-gen2 (map (fn [x] `(~(symbol (:name x)) ~(:args x)
-				(~(symbol (str "." (:name x))) ~wrap-sym ~@(:args x)))) undefined)]
-     `(let [~wrap-sym ~obj] (proxy ~interfaces ~variables ~@auto-gen))))
+			    ~@(take (:args m) (args-list)))))))]
+    `(let [~wrap-sym ~obj] (proxy ~interfaces ~variables ~@auto-gen))))
