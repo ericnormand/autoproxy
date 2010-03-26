@@ -23,7 +23,7 @@ This creates a proxy object that inherits from Object and has a custom toString 
 
 ### auto-wrapper
     
-    (def obj <some InputStram>)
+    (def obj <some InputStream>)
     (auto-wrapper obj [InputStream] []
       (close [] 
         (.close obj)
